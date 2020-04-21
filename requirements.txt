@@ -4,3 +4,5 @@ requests
 tqdm
 numpy
 toposort
+mlflow==1.7.2
+GPUtil

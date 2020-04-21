@@ -15,6 +15,12 @@ from datetime import datetime
 import csv
 import argparse
 
+from gpt_2_simple.mylogger import Logger
+import platform
+import mlflow
+import mlflow.tensorflow
+import GPUtil
+
 # if in Google Colaboratory
 try:
     from google.colab import drive
@@ -146,8 +152,7 @@ def finetune(sess,
              use_memory_saving_gradients=False,
              only_train_transformer_layers=False,
              optimizer='adam',
-             overwrite=False,
-             mlflow=None
+             overwrite=False
             ):
     """Finetunes the model on the given dataset.
 
@@ -359,6 +364,14 @@ def finetune(sess,
                         avg=avg_loss[0] / avg_loss[1]))
 
             counter += 1
+    except Exception as e:
+        print(e)
+        save()
+        # Log model ro mlflow
+        if os.path.exists(os.path.join(SAMPLE_DIR, run_name)):
+            mlflow.log_artifacts(os.path.join(SAMPLE_DIR, run_name), "samples")
+        mlflow.log_artifacts(checkpoint_path, "model")
+        raise(e)
     except KeyboardInterrupt:
         print('interrupted')
         save()
@@ -752,28 +765,71 @@ def cmd():
     parser.add_argument(
         '--multi_gpu',  help="[generate/finetune] Attempt to allocate multiple GPUs for running.",
         nargs='?', default=True, type=lambda x: (str(x).lower() == 'true'))
+    parser.add_argument('--mlflow-server-uri', type=str, default="./mlruns",
+                        help='MLFlow remote server URI')
+    parser.add_argument('--mlflow-artifact-uri', type=str, default="./artifacts",
+                        help='MLFlow artifacts URI')
+    parser.add_argument('--mlflow-experiment-id', type=str, default="gpt-2",
+                        help='MLFlow experiment identifier')
 
     # Positional arguments
     parser.add_argument('mode', nargs='?')
     parser.add_argument('dataset', nargs='?')
-
+    
     args = parser.parse_args()
     assert args.mode in ['finetune', 'generate'], "Mode must be 'finetune' or 'generate'"
 
+    # setup mlflow
+    remote_server_uri = args.mlflow_server_uri
+    artifact_location_uri = args.mlflow_artifact_uri
+    mlflow.set_tracking_uri(remote_server_uri)
+    
     if args.mode == 'finetune':
+
         assert args.dataset is not None, "You need to provide a dataset."
 
-        cmd_finetune(dataset=args.dataset, run_name=args.run_name,
-                     checkpoint_dir=args.checkpoint_dir,
-                     model_name=args.model_name,
-                     model_dir=args.model_dir,
-                     steps=args.steps, restore_from=args.restore_from,
-                     sample_every=args.sample_every,
-                     save_every=args.save_every,
-                     print_every=args.print_every,
-                     optimizer=args.optimizer,
-                     overwrite=args.overwrite,
-                     multi_gpu=args.multi_gpu)
+        # redirect logs to log file
+        output_path = os.path.join(args.checkpoint_dir, args.run_name)
+        os.makedirs(output_path, exist_ok=True)
+        sys.stdout = Logger(os.path.join(output_path, 'out.log'))
+
+        # start mlflow run
+        mlflow.tensorflow.autolog()
+        experiment_id = args.mlflow_experiment_id
+        try:
+            exp_id = mlflow.create_experiment(experiment_id, artifact_location=artifact_location_uri)
+        except:
+            exp_id = mlflow.set_experiment(experiment_id)
+        start_time = time.time()
+        with mlflow.start_run(experiment_id=exp_id):
+            # log tags and parameters
+            mlflow.set_tag("Machine", platform.system())
+            mlflow.set_tag("Release", platform.release())
+            if (len(GPUtil.getGPUs()) > 0):
+                mlflow.set_tag("GPU", GPUtil.getGPUs()[0].name)
+            mlflow.log_param("model", args.model_name)
+            mlflow.log_param("steps", args.steps)
+            mlflow.log_param("run name", args.run_name)
+            mlflow.log_param("restore from", args.restore_from)
+            mlflow.log_param("learning rate", 1e-4)
+            # finetune
+            cmd_finetune(dataset=args.dataset, run_name=args.run_name,
+                         checkpoint_dir=args.checkpoint_dir,
+                         model_name=args.model_name,
+                         model_dir=args.model_dir,
+                         steps=args.steps, restore_from=args.restore_from,
+                         sample_every=args.sample_every,
+                         save_every=args.save_every,
+                         print_every=args.print_every,
+                         optimizer=args.optimizer,
+                         overwrite=args.overwrite,
+                         multi_gpu=args.multi_gpu)
+            print(f'------ Ellapsed time: {time.time() - start_time} (s) --------')
+            # Upload logs, samples and model to MLFlow
+            if os.path.exists(os.path.join("samples", args.run_name)):
+                mlflow.log_artifacts(os.path.join("samples", args.run_name), "samples")
+            mlflow.log_artifacts(output_path, "model")
+
     if args.mode == "generate":
         cmd_generate(nfiles=args.nfiles, nsamples=args.nsamples,
                      folder=args.folder, length=args.length,

@@ -146,7 +146,9 @@ def finetune(sess,
              use_memory_saving_gradients=False,
              only_train_transformer_layers=False,
              optimizer='adam',
-             overwrite=False):
+             overwrite=False,
+             mlflow=None
+            ):
     """Finetunes the model on the given dataset.
 
     Adapted from https://github.com/nshepperd/gpt-2/blob/finetuning/train.py.
@@ -340,13 +342,14 @@ def finetune(sess,
                 (_, v_loss, v_summary) = sess.run(
                     (opt_apply, loss, summary_loss),
                     feed_dict={context: sample_batch()})
-
+            
             summary_log.add_summary(v_summary, counter)
 
             if counter % print_every == 0:
                 avg_loss = (avg_loss[0] * 0.99 + v_loss,
                             avg_loss[1] * 0.99 + 1.0)
-
+                if mlflow is not None:
+                    mlflow.log_metric("avg loss", avg_loss[0] / avg_loss[1], step=counter)
                 print(
                     '[{counter} | {time:2.2f}] loss={loss:2.2f} avg={avg:2.2f}'
                     .format(

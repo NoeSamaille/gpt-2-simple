@@ -16,10 +16,8 @@ You can use gpt-2-simple to retrain a model using a GPU **for free** in [this Co
 
 ## Install
 
-gpt-2-simple can be installed [via PyPI](https://pypi.org/project/gpt_2_simple/):
-
 ```shell
-pip3 install gpt-2-simple
+python setup.py install
 ```
 
 You will also need to install the corresponding TensorFlow for your system (e.g. `tensorflow` or `tensorflow-gpu`). **TensorFlow 2.0 is currently not supported** and the package will throw an assertion if loaded, so TensorFlow 1.14/1.15 is recommended.
